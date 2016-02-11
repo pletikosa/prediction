@@ -1,0 +1,175 @@
+
+Predicting the Exercise Manner from the Human Activity Recognition Dataset
+=================================================================
+
+**_Author: Irena Pletikosa Cvijikj_**
+
+### Overview
+
+Recent technological developments have enabled emergence of a new movement, known as "quantified self". Among others things, quantified self refers to tracking personal activities via sensor-based devices (e.g. Fitbit), in order to achieve different goals, such as improving own health.
+
+This projects aims at predicting the manner in which the exercise was performed based on the available sensor data from accelerometers on the belt, forearm, arm, and dumbbell of six participants. The dataset used for this study is the Human Activity Recognition (HAR) dataset [1].
+
+The process of obtaining and analyzing the data, as well as the reasoning behind building a model, applying cross validation, estimating out of sample error, and predicting is provided in the continuation.
+
+Before proceeding further, we first load the required libraries.
+
+```{r libraries, message=FALSE}
+library(caret)
+library(rattle)
+library(randomForest)
+```
+
+### Loading the Data
+
+First, we load the data into the R environment as follows:
+
+```{r dataLoading}
+trainUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(trainUrl,"pml-training.csv", mode="wb")
+pmlTraining <- read.csv("pml-training.csv", header=TRUE, na.strings=c("NA","#DIV/0!",""))
+
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(testUrl,"pml-testing.csv", mode="wb")
+pmlTesting <- read.csv("pml-testing.csv", header=TRUE, na.strings=c("NA","#DIV/0!",""))
+```
+
+### Data Summary and Initial Preprocessing
+
+We then investigate the training and testing data with the following commands: 
+```{r summary, results='hide'}
+summary(pmlTraining)
+str(pmlTraining, list.len=ncol(pmlTraining))
+
+summary(pmlTesting)
+str(pmlTesting, list.len=ncol(pmlTesting))
+```
+
+For better readability, the output of these commands is not included in this report. The data summary revealed that there is a difference in the name of the last column between two datasets, i.e. in the training dataset, it represents the output variable `r names(pmlTraining)[ncol(pmlTraining)]`, while in the testing dataset it is an identified `r names(pmlTesting)[ncol(pmlTesting)]`. We further test if the remaining columns in both datasets are the same:
+
+```{r comparison}
+all.equal(names(pmlTraining)[1:ncol(pmlTraining) - 1], names(pmlTesting)[1:ncol(pmlTraining) - 1])
+```
+
+The results show that other columns are the same, implying that the same preprocessing (if needed) can be applied to both datasets.
+
+The data summary also revealed that the first 7 columns, i.e. (`r names(pmlTesting)[1:7]`), represent variables which are not sensor data and as such are not needed for the prediction model. Therefore, these columns are removed:
+
+```{r nonSensorData}
+pmlTraining <- pmlTraining[, 8:ncol(pmlTesting)]
+pmlTesting <- pmlTesting[, 8:ncol(pmlTesting)]
+```
+
+Finally, the data summary showed that there are some variables with a large portion of `NA` values in the dataset. We investigate this problem as follows:
+
+```{r naColumnsIdentify}
+naValues <- c()
+for(i in 1:ncol(pmlTraining)) {
+  naValues <- c(naValues, sum(is.na(pmlTraining[, i])))    
+}
+plot(naValues, main = "Number of NA values per column", xlab="Column Index", ylab="Number of NA values")
+```
+
+The plot shows that most of the variables which contain `NA` values have more than `r round(min(naValues[naValues > 0]) / nrow(pmlTraining) * 100, 2)`% of such values. Thus, these are further removed from the dataset:
+
+```{r naColumnsRemove}
+naCols <- c()
+for(i in 1:ncol(pmlTraining)) {
+  if (naValues[i] > mean(naValues)) {
+    naCols <- c(naCols, FALSE)
+  } else {
+    naCols <- c(naCols, TRUE)
+  }
+}
+
+pmlTraining <- pmlTraining[,naCols]
+pmlTesting <- pmlTesting[,naCols]
+```
+
+As a final check, the columns with near zero variance are inspected:
+
+```{r nzv}
+nzVar <- nearZeroVar(pmlTraining, saveMetrics=TRUE)
+sum(nzVar$nzv)
+```
+
+It can be seen that after the previous step, there are no more columns with near zero variance, thus no additional action is required. 
+
+### Building the Prediction Model
+
+We first split our dataset into the training and cross validation dataset:
+
+```{r dataSplit}
+set.seed(12345)
+inTrain <- createDataPartition(y = pmlTraining$classe, p=0.6, list=FALSE)
+training <- pmlTraining[inTrain, ]
+crossValidation <- pmlTraining[-inTrain, ]
+```
+
+#### Classification Tree
+
+We start by trying a classification tree model as follows:
+
+```{r classificationTree}
+modelFitDT <- train(classe ~., data = training, method="rpart")
+print(modelFitDT)
+```
+
+The printout of the final model and its graphical representation are provided in *Listing 1* and *Figure 1* respectively.
+
+We then estimate the accuracy of the model over the training data and conduct cross validation:
+
+```{r crossValidationDT}
+predDT <- predict(modelFitDT, newdata=training)
+print(confusionMatrix(predDT, training$classe))
+
+predDTCV <- predict(modelFitDT, newdata=crossValidation)
+print(confusionMatrix(predDTCV, crossValidation$classe))
+```
+
+The classification tree model has very low accuracy, resulting in large values for both in sample (`49.25%`) and out of sample (`50.06%`) error. As an alternative, we try to fit the random forest model.
+
+#### Random Forest
+
+```{r randomForest}
+modelFitRF <- randomForest(classe ~., data = training)
+print(modelFitRF)
+```
+
+As can be seen, the out of bag error for the obtained model is very low (`0.76%`). To assess the accuracy of the model over the cross validation data, we look into the confusion matrix:
+
+```{r crossValidationRF}
+predRFCV <- predict(modelFitRF, newdata=crossValidation)
+print(confusionMatrix(predRFCV, crossValidation$classe))
+```
+
+Now the obtained accuracy is much higher (`0.994`), and thus the out of sample error is `0.6%`. Thus we choose this model for performing the prediction in the final step.
+
+### Prediction
+
+We finally perform prediction using the initially provided training dataset. 
+
+```{r prediction}
+(pred <- predict(modelFitRF, newdata=pmlTesting))
+```
+
+### References
+
+[1] Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6.
+
+### Appendix
+
+**Listing 1: The final classification tree model**  
+```{r}
+print(modelFitDT$finalModel)
+```
+
+**Figure 1: Classification tree model**
+```{r}
+fancyRpartPlot(modelFitDT$finalModel)
+```
+
+**Figure 2: Random forest model**
+```{r}
+plot(modelFitRF)
+```
